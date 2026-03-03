@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import streamlit as st
 import datetime
+import re
 
 def process_kb_pdf(uploaded_file, template_path, font_path="NanumGothic.ttf"):
     # 템플릿 이미지 읽기 (그레이스케일)
@@ -172,6 +173,150 @@ def process_meritz_pdf(uploaded_file, font_path="NanumGothic.ttf"):
     output_buffer.seek(0)
     return output_buffer
 
+def process_db_pdf(uploaded_file, font_path="NanumGothic.ttf"):
+    pdf_bytes = uploaded_file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    
+    # 1단계: 이름 찾기 (1페이지)
+    client_name = "고객" 
+    page1 = doc[0]
+    words1 = page1.get_text("words") 
+    
+    for i, w in enumerate(words1):
+        text_content = w[4].strip()
+        if "고객님" in text_content:
+            if text_content != "고객님":
+                client_name = text_content.replace("고객님", "").strip()
+            elif i > 0:
+                client_name = words1[i-1][4].strip()
+            break
+
+    # 2단계: 기준점 "구분" 위치 찾기 (2페이지)
+    ref_x0, ref_y0 = None, None
+    if len(doc) >= 2:
+        page2 = doc[1]
+        words2 = page2.get_text("words")
+        for w in words2:
+            if "구분" in w[4]:
+                ref_x0, ref_y0 = w[0], w[1]
+                break
+    
+    # 3단계: 내용 수정 (모든 페이지)
+    for page_idx, page in enumerate(doc):
+        page.insert_font(fontname="kor", fontfile=font_path)
+        
+        # V자 체크: "동의함" 우측 +40 
+        v_targets = page.search_for("동의함")
+        for rect in v_targets:
+            v_point = fitz.Point(rect.x0 + 40, rect.y1 - 2)
+            page.insert_text(v_point, "V", fontname="kor", fontsize=15, color=(0, 0, 0))
+        
+        # 이름 기입: 2페이지
+        if page_idx == 1 and ref_x0 is not None:
+            p1 = fitz.Point(ref_x0 + 45, ref_y0 + 27)
+            page.insert_text(p1, client_name, fontname="kor", fontsize=11, color=(0, 0, 0))
+            
+            p2 = fitz.Point(ref_x0 + 45, ref_y0 + 60)
+            page.insert_text(p2, client_name, fontname="kor", fontsize=11, color=(0, 0, 0))
+
+    # 고효율 압축 저장
+    output_buffer = io.BytesIO()
+    doc.save(
+        output_buffer,
+        garbage=4,
+        deflate=True,
+        clean=True
+    )
+    doc.close()
+    
+    output_buffer.seek(0)
+    return output_buffer
+
+def process_samsung_pdf(uploaded_file, font_path="NanumGothic.ttf"):
+    pdf_bytes = uploaded_file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    
+    # 이름 추출 로직
+    page1 = doc[0]
+    customer_name = "고객" 
+    full_text_p1 = page1.get_text()
+    
+    name_match = re.search(r'\(\s*([^)\s]+)\s*고객님\s*\)', full_text_p1)
+    if name_match:
+        customer_name = name_match.group(1).strip()
+    else:
+        name_match_alt = re.search(r'([가-힣A-Za-z]+)\s*고객님', full_text_p1)
+        if name_match_alt:
+            customer_name = name_match_alt.group(1).strip()
+        else:
+            words = page1.get_text("words")
+            for i, w in enumerate(words):
+                if "고객님" in w[4]:
+                    if i > 0:
+                        customer_name = words[i-1][4].strip("() ")
+                        break
+
+    # 데이터 추출 (2페이지 기준점)
+    page2 = doc[1] if len(doc) > 1 else None
+    ref_x0, ref_y0 = 0, 0
+    date_ref_x1, date_ref_y1 = 0, 0
+    
+    if page2:
+        words2 = page2.get_text("words")
+        for w in words2:
+            if "동의자" in w[4]:
+                ref_x0, ref_y0 = w[0], w[1]
+                break
+        
+        date_hits = page2.search_for("20")
+        if date_hits:
+            date_ref_x1 = date_hits[0].x1
+            date_ref_y1 = date_hits[0].y1
+
+    # 작업 수행
+    now = datetime.datetime.now()
+    today_yy = now.strftime("%y")
+    today_mm = now.strftime("%m")
+    today_dd = now.strftime("%d")
+
+    for page_index, page in enumerate(doc):
+        page.insert_font(fontname="kor", fontfile=font_path)
+
+        # A. V자 체크
+        v_targets = page.search_for("동의함")
+        for rect in v_targets:
+            page.insert_text((rect.x0 - 25, rect.y1 + 3), "V", 
+                             fontsize=21, fontname="kor", color=(0, 0, 0))
+
+        # B. 2페이지 작업
+        if page_index == 1:
+            if ref_x0 > 0:
+                page.insert_text((ref_x0 + 30, ref_y0 + 5), customer_name, 
+                                 fontsize=16, fontname="kor", color=(0, 0, 0))
+                page.insert_text((ref_x0 + 95, ref_y0 + 5), customer_name, 
+                                 fontsize=8, fontname="kor", color=(0, 0, 0))
+            
+            if date_ref_x1 > 0:
+                page.insert_text((date_ref_x1 + 5, date_ref_y1 - 2), today_yy, 
+                                 fontsize=11, fontname="kor", color=(0, 0, 0))
+                page.insert_text((date_ref_x1 + 40, date_ref_y1 - 2), today_mm, 
+                                 fontsize=11, fontname="kor", color=(0, 0, 0))
+                page.insert_text((date_ref_x1 + 70, date_ref_y1 - 2), today_dd, 
+                                 fontsize=11, fontname="kor", color=(0, 0, 0))
+
+    # 고효율 압축 저장
+    output_buffer = io.BytesIO()
+    doc.save(
+        output_buffer,
+        garbage=4,
+        deflate=True,
+        clean=True
+    )
+    doc.close()
+    
+    output_buffer.seek(0)
+    return output_buffer
+
 def main():
     st.set_page_config(page_title="보험 동의서 자동 완성", page_icon="📝", layout="centered")
     
@@ -191,14 +336,14 @@ def main():
         *   📅 **자동 날짜 기입:** 지정된 서명 일자란에 오늘 날짜를 자동으로 입력해 줍니다. (메리츠화재)
         *   🗜️ **파일 용량 최적화:** 모바일로 전송하기 편하도록 PDF 파일 용량을 스마트하게 압축해 줍니다.
         
-        현재 **KB손해보험**과 **메리츠화재** 양식을 지원합니다. 아래에서 보험사를 선택하고 가입설계동의서 PDF를 업로드해 보세요!
+        현재 **KB손해보험**, **메리츠화재**, **삼성화재**, **DB손해보험** 양식을 지원합니다. 아래에서 보험사를 선택하고 가입설계동의서 PDF를 업로드해 보세요!
         """)
 
 
     # 대상 보험사 선택
     insurance_company = st.radio(
         "보험사를 선택하세요:",
-        ("KB손해보험", "메리츠화재"),
+        ("KB손해보험", "메리츠화재", "삼성화재", "DB손해보험"),
         horizontal=True
     )
     
@@ -225,9 +370,15 @@ def main():
                     if insurance_company == "KB손해보험":
                         processed_pdf = process_kb_pdf(uploaded_file, template_path, font_path)
                         company_suffix = "KB손보"
-                    else:
+                    elif insurance_company == "메리츠화재":
                         processed_pdf = process_meritz_pdf(uploaded_file, font_path)
                         company_suffix = "메리츠화재"
+                    elif insurance_company == "삼성화재":
+                        processed_pdf = process_samsung_pdf(uploaded_file, font_path)
+                        company_suffix = "삼성화재"
+                    else: # DB손해보험
+                        processed_pdf = process_db_pdf(uploaded_file, font_path)
+                        company_suffix = "DB손해보험"
                     
                     st.success("✅ 처리 완료!")
                     
