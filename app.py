@@ -399,6 +399,67 @@ def process_nh_pdf(uploaded_file, template_path, font_path="UhBee Creator.ttf"):
     output_buffer.seek(0)
     return output_buffer
 
+def process_hanhwa_pdf(uploaded_file, font_path="UhBee Creator.ttf"):
+    pdf_bytes = uploaded_file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    now = datetime.datetime.now()
+    year_str = now.strftime("%y")
+    month_str = now.strftime("%m")
+    day_str = now.strftime("%d")
+
+    ref_name_coords = None
+    target_name = ""
+
+    if len(doc) >= 2:
+        page2 = doc[1]
+        words = page2.get_text("words")
+        
+        for i, w in enumerate(words):
+            if "동의자" in w[4]:
+                if i + 1 < len(words):
+                    name_word = words[i+1]
+                    target_name = name_word[4]
+                    ref_name_coords = (name_word[0], name_word[1])
+                    break
+
+    for page in doc:
+        page.insert_font(fontname="kor", fontfile=font_path)
+
+        found_agrees = page.search_for("동의함")
+        for rect in found_agrees:
+            v_x = rect.x0 - 25
+            v_y = rect.y1 + 1
+            page.insert_text((v_x, v_y), "V", fontname="kor", fontsize=21, color=(0, 0, 0))
+
+    if len(doc) >= 2:
+        page2 = doc[1]
+        
+        if ref_name_coords and target_name:
+            nx, ny = ref_name_coords
+            page2.insert_text((nx + 70, ny + 10), target_name, fontname="kor", fontsize=13, color=(0, 0, 0))
+
+        date_labels = page2.search_for("동의일자")
+        if date_labels:
+            rect = date_labels[0]
+            x1, y1 = rect.x1, rect.y1
+            
+            page2.insert_text((x1 + 30, y1 - 2), year_str, fontname="kor", fontsize=11, color=(0, 0, 0))
+            page2.insert_text((x1 + 67, y1 - 2), month_str, fontname="kor", fontsize=11, color=(0, 0, 0))
+            page2.insert_text((x1 + 103, y1 - 2), day_str, fontname="kor", fontsize=11, color=(0, 0, 0))
+
+    output_buffer = io.BytesIO()
+    doc.save(
+        output_buffer,
+        garbage=4,
+        deflate=True,
+        clean=True
+    )
+    doc.close()
+    
+    output_buffer.seek(0)
+    return output_buffer
+
 def main():
     st.set_page_config(page_title="보험 동의서 자동 완성", page_icon="📝", layout="centered")
     
@@ -418,14 +479,14 @@ def main():
         *   📅 **자동 날짜 기입:** 지정된 서명 일자란에 오늘 날짜를 자동으로 입력해 줍니다. (메리츠화재)
         *   🗜️ **파일 용량 최적화:** 모바일로 전송하기 편하도록 PDF 파일 용량을 스마트하게 압축해 줍니다.
         
-        현재 **메리츠화재**, **KB손해보험**, **삼성화재**, **DB손해보험**, **NH손해보험** 양식을 지원합니다. 아래에서 보험사를 선택하고 가입설계동의서 PDF를 업로드해 보세요!
+        현재 **메리츠화재**, **KB손해보험**, **삼성화재**, **DB손해보험**, **NH손해보험**, **한화손해보험** 양식을 지원합니다. 아래에서 보험사를 선택하고 가입설계동의서 PDF를 업로드해 보세요!
         """)
 
 
     # 대상 보험사 선택
     insurance_company = st.radio(
         "보험사를 선택하세요:",
-        ("메리츠화재", "KB손해보험", "삼성화재", "DB손해보험", "NH손해보험"),
+        ("메리츠화재", "KB손해보험", "삼성화재", "DB손해보험", "NH손해보험", "한화손해보험"),
         horizontal=True
     )
     
@@ -465,6 +526,9 @@ def main():
                     elif insurance_company == "NH손해보험":
                         processed_pdf = process_nh_pdf(uploaded_file, nh_template_path, font_path)
                         company_suffix = "NH손해보험"
+                    elif insurance_company == "한화손해보험":
+                        processed_pdf = process_hanhwa_pdf(uploaded_file, font_path)
+                        company_suffix = "한화손보"
                     else: # DB손해보험
                         processed_pdf = process_db_pdf(uploaded_file, font_path)
                         company_suffix = "DB손해보험"
