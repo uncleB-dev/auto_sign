@@ -6,6 +6,88 @@ import numpy as np
 import streamlit as st
 import datetime
 import re
+import time
+from supabase import create_client, Client
+
+# Supabase 설정 (환경 변수 또는 Streamlit secrets 권장)
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
+SUPABASE_KEY = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+
+def get_supabase():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def check_membership(email):
+    """사용자가 PAID 등급인지 확인합니다."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+    
+    try:
+        response = supabase.table("users").select("role").eq("email", email).execute()
+        if response.data:
+            return response.data[0].get("role") in ["PAID", "ADMIN"]
+    except Exception as e:
+        st.error(f"인증 오류: {str(e)}")
+    return False
+
+def apply_custom_style():
+    """UncleB Studio 프리미엄 디자인 시스템 적용"""
+    st.markdown("""
+        <style>
+        /* 메인 배경 및 텍스트 컬러 */
+        .stApp {
+            background-color: #0E1117;
+            color: #E0E0E0;
+        }
+        
+        /* 타이틀 및 헤더 스타일 */
+        h1, h2, h3 {
+            color: #00ADB5 !important; /* Deep Teal 강조 */
+            font-family: 'Inter', sans-serif;
+        }
+        
+        /* 버튼 스타일 커스터마이징 */
+        .stButton > button {
+            background-color: #FF8C00 !important; /* Warm Orange */
+            color: white !important;
+            border-radius: 8px !important;
+            border: none !important;
+            padding: 10px 24px !important;
+            font-weight: 600 !important;
+            transition: all 0.3s ease;
+        }
+        
+        .stButton > button:hover {
+            background-color: #E67E00 !important;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 140, 0, 0.3);
+        }
+        
+        /* 파일 업로더 스타일 */
+        .stFileUploader {
+            border: 2px dashed #00ADB5 !important;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        /* 카드형 섹션 (Expander) */
+        .streamlit-expanderHeader {
+            background-color: rgba(0, 173, 181, 0.1) !important;
+            border-radius: 8px !important;
+            border: 1px solid rgba(0, 173, 181, 0.2) !important;
+        }
+        
+        /* 성공 메시지 스타일 */
+        .stAlert {
+            background-color: rgba(0, 173, 181, 0.1) !important;
+            color: #00ADB5 !important;
+            border: 1px solid #00ADB5 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
 
 def process_kb_pdf(uploaded_file, template_path, font_path="UhBee Creator.ttf"):
     # 템플릿 이미지 읽기 (그레이스케일)
@@ -461,9 +543,11 @@ def process_hanhwa_pdf(uploaded_file, font_path="UhBee Creator.ttf"):
     return output_buffer
 
 def main():
-    st.set_page_config(page_title="보험 동의서 자동 완성", page_icon="📝", layout="centered")
+    st.set_page_config(page_title="UncleB AutoSign - 보험 동의서 자동 완성", page_icon="📝", layout="centered")
+    apply_custom_style()
     
-    st.title("보험 동의서 자동 완성 웹 앱")
+    st.title("🚀 UncleB AutoSign")
+    st.markdown("*영업 전문가를 위한 가입설계동의서 자동화 솔루션*")
     st.markdown("---")
 
     # 서비스 설명란 추가
@@ -482,6 +566,32 @@ def main():
         현재 **메리츠화재**, **KB손해보험**, **삼성화재**, **DB손해보험**, **NH손해보험**, **한화손해보험** 양식을 지원합니다. 아래에서 보험사를 선택하고 가입설계동의서 PDF를 업로드해 보세요!
         """)
 
+
+    # 인증 섹션
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if not st.session_state.authenticated:
+        with st.form("login_form"):
+            st.subheader("🔐 멤버십 인증")
+            email = st.text_input("UncleB Studio 계정 이메일")
+            submit_button = st.form_submit_button("인증하기")
+            
+            if submit_button:
+                if check_membership(email):
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = email
+                    st.success(f"{email}님, 환영합니다! 서비스를 이용하실 수 있습니다.")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("유효한 멤버십을 찾을 수 없습니다. UncleB Studio에서 정기 구독 여부를 확인해 주세요.")
+        st.stop()
+
+    st.sidebar.info(f"👤 {st.session_state.user_email} (멤버십 인증됨)")
+    if st.sidebar.button("로그아웃"):
+        st.session_state.authenticated = False
+        st.rerun()
 
     # 대상 보험사 선택
     insurance_company = st.radio(
