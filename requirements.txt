@@ -3,3 +3,4 @@ PyMuPDF
 opencv-python-headless
 numpy
 supabase
+extra-streamlit-components

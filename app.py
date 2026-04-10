@@ -8,6 +8,7 @@ import datetime
 import re
 import time
 from supabase import create_client, Client
+import extra_streamlit_components as stx
 
 # Supabase 설정 (환경 변수 또는 Streamlit secrets 권장)
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
@@ -567,20 +568,38 @@ def main():
         """)
 
 
+    # 쿠키 매니저 초기화
+    cookie_manager = stx.CookieManager()
+
     # 인증 섹션
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
+        
+    # 쿠키에서 이메일 읽어오기 (자동 로그인 시도)
+    if not st.session_state.authenticated:
+        saved_email = cookie_manager.get(cookie="uncleb_auth_email")
+        if saved_email:
+            if check_membership(saved_email):
+                st.session_state.authenticated = True
+                st.session_state.user_email = saved_email
+                st.rerun()
 
     if not st.session_state.authenticated:
         with st.form("login_form"):
             st.subheader("🔐 멤버십 인증")
             email = st.text_input("UncleB Studio 계정 이메일")
+            remember_me = st.checkbox("이 브라우저에서 인증 유지하기", value=True)
             submit_button = st.form_submit_button("인증하기")
             
             if submit_button:
                 if check_membership(email):
                     st.session_state.authenticated = True
                     st.session_state.user_email = email
+                    
+                    # 인증 유지 선택 시 쿠키 저장 (30일간 유지)
+                    if remember_me:
+                        cookie_manager.set("uncleb_auth_email", email, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+                    
                     st.success(f"{email}님, 환영합니다! 서비스를 이용하실 수 있습니다.")
                     time.sleep(1)
                     st.rerun()
@@ -591,6 +610,7 @@ def main():
     st.sidebar.info(f"👤 {st.session_state.user_email} (멤버십 인증됨)")
     if st.sidebar.button("로그아웃"):
         st.session_state.authenticated = False
+        cookie_manager.delete("uncleb_auth_email")
         st.rerun()
 
     # 대상 보험사 선택
